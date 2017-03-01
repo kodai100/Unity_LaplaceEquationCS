@@ -2,12 +2,12 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-public class LaplaceCS : MonoBehaviour {
+public class LatticeDebug : MonoBehaviour {
 
     public enum Mode {
-        Animation, Static
+        Both, Phase1, Phase2
     }
-    public Mode mode;
+    public Mode mode = Mode.Both;
 
     #region GPU
     const int SIMULATION_BLOCK_SIZE = 256;
@@ -21,30 +21,18 @@ public class LaplaceCS : MonoBehaviour {
     public int width = 256;
     public int height = 256;
 
-    public float allowed_error = 0.00001f;
-    public int allowed_iter = 1000;
-
     public float left_strength;
     public float right_strength;
     public float up_strength;
     public float bottom_strength;
 
-    [Range(1.0f, 1.3f)] public float sor_coef = 1f;
-
     Texture2D texture;
     float[] potential_read, potential_write;
-    
-    int count;
-    bool finish;
-    float errorMax;
 
     void Start() {
         texture = new Texture2D(width, height, TextureFormat.ARGB32, false);
         texture.filterMode = FilterMode.Point;
-
-        count = 0;
-        finish = false;
-
+        
         bufferSize = width * height;
         potential_read = new float[bufferSize];
         potential_write = new float[bufferSize];
@@ -55,13 +43,11 @@ public class LaplaceCS : MonoBehaviour {
         
         SetBoundaryCondition();
 
-        if (!finish && mode == Mode.Static) LaplaceEquation();
+        LaplaceEquation();
+        
     }
 
     void Update() {
-
-        errorMax = 0f;
-        if (!finish && mode == Mode.Animation) AnimatedLaplaceEquation();
 
     }
 
@@ -96,123 +82,44 @@ public class LaplaceCS : MonoBehaviour {
     // For Static Mode
     void LaplaceEquation() {
 
-        do {
-            errorMax = 0;
-
-            // Phase 1
-            LaplaceCS_1.SetFloat("SOR_COEF", sor_coef);
+        if(mode == Mode.Both || mode == Mode.Phase1) {
             LaplaceCS_1.SetInt("BUFFER_SIZE", bufferSize);
             LaplaceCS_1.SetInt("WIDTH", width);
             LaplaceCS_1.SetInt("HEIGHT", height);
-
             int kernel = LaplaceCS_1.FindKernel("Laplace_Phase1");
             LaplaceCS_1.SetBuffer(kernel, "_PotentialBufferRead", potential_buffer_read);
             LaplaceCS_1.SetBuffer(kernel, "_PotentialBufferWrite", phase1_to_2);
 
             LaplaceCS_1.Dispatch(kernel, threadGroupSize, 1, 1);
 
-
-            // Phase 2
-            LaplaceCS_2.SetFloat("SOR_COEF", sor_coef);
+            SwapBuffer(ref potential_buffer_read, ref phase1_to_2);
+        }
+        
+        if(mode == Mode.Both || mode == Mode.Phase2) {
             LaplaceCS_2.SetInt("BUFFER_SIZE", bufferSize);
             LaplaceCS_2.SetInt("WIDTH", width);
             LaplaceCS_2.SetInt("HEIGHT", height);
 
-            kernel = LaplaceCS_2.FindKernel("Laplace_Phase2");
+            int kernel = LaplaceCS_2.FindKernel("Laplace_Phase2");
             LaplaceCS_2.SetBuffer(kernel, "_PotentialBufferRead", phase1_to_2);
             LaplaceCS_2.SetBuffer(kernel, "_PotentialBufferWrite", potential_buffer_write);
 
             LaplaceCS_2.Dispatch(kernel, threadGroupSize, 1, 1);
 
+            SwapBuffer(ref potential_buffer_read, ref potential_buffer_write);
+        }
 
-            // Error Check
-            potential_buffer_read.GetData(potential_read);
-            potential_buffer_write.GetData(potential_write);
-
-            float error;
-            for (int i = 0; i < bufferSize; i++) {
-                error = Mathf.Abs(potential_read[i] - potential_write[i]);
-                if (errorMax < error) {
-                    errorMax = error;
-                }
-            }
-
-            // Debug.Log(count++ + ", " + errorMax);
-
-            // Buffer Swap
-            SwapBuffer();
-
-            count++;
-            if (count > allowed_iter) break;
-
-        } while (errorMax > allowed_error);
-
-        finish = true;
-        Debug.Log("Finished: " + count);
-
-        ApplyTexture();
-    }
-
-    // For Animation Mode
-    void AnimatedLaplaceEquation() {
-
-        // Phase 1
-        LaplaceCS_1.SetFloat("SOR_COEF", sor_coef);
-        LaplaceCS_1.SetInt("BUFFER_SIZE", bufferSize);
-        LaplaceCS_1.SetInt("WIDTH", width);
-        LaplaceCS_1.SetInt("HEIGHT", height);
-
-        int kernel = LaplaceCS_1.FindKernel("Laplace_Phase1");
-        LaplaceCS_1.SetBuffer(kernel, "_PotentialBufferRead", potential_buffer_read);
-        LaplaceCS_1.SetBuffer(kernel, "_PotentialBufferWrite", phase1_to_2);
-
-        LaplaceCS_1.Dispatch(kernel, threadGroupSize, 1, 1);
-
-
-        // Phase 2
-        LaplaceCS_2.SetFloat("SOR_COEF", sor_coef);
-        LaplaceCS_2.SetInt("BUFFER_SIZE", bufferSize);
-        LaplaceCS_2.SetInt("WIDTH", width);
-        LaplaceCS_2.SetInt("HEIGHT", height);
-
-        kernel = LaplaceCS_2.FindKernel("Laplace_Phase2");
-        LaplaceCS_2.SetBuffer(kernel, "_PotentialBufferRead", phase1_to_2);
-        LaplaceCS_2.SetBuffer(kernel, "_PotentialBufferWrite", potential_buffer_write);
-
-        LaplaceCS_2.Dispatch(kernel, threadGroupSize, 1, 1);
-
-
-        // Error Check
+        // Get Data
         potential_buffer_read.GetData(potential_read);
         potential_buffer_write.GetData(potential_write);
-
-        float error;
-        for (int i = 0; i < bufferSize; i++) {
-            error = Mathf.Abs(potential_read[i] - potential_write[i]);
-            if (errorMax < error) {
-                errorMax = error;
-            }
-        }
-
-        Debug.Log(count++ + ", " + errorMax);
-
-        if (errorMax < allowed_error) {
-            finish = true;
-        }
-
-
-        // Result
+        
         ApplyTexture();
-
-        // Buffer Swap
-        SwapBuffer();
-
     }
 
-    void SwapBuffer() {
-        ComputeBuffer tmp = potential_buffer_write;
-        potential_buffer_write = potential_buffer_read;
-        potential_buffer_read = tmp;
+    void SwapBuffer(ref ComputeBuffer src, ref ComputeBuffer dst) {
+        ComputeBuffer tmp = dst;
+        dst = src;
+        src = tmp;
     }
 
     void ApplyTexture() {

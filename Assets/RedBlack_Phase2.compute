@@ -6,7 +6,6 @@ StructuredBuffer<float> _PotentialBufferRead;
 RWStructuredBuffer<float> _PotentialBufferWrite;
 
 cbuffer cb {
-	float SOR_COEF;
 	uint BUFFER_SIZE;
 	uint WIDTH;
 	uint HEIGHT;
@@ -27,18 +26,20 @@ void Laplace_Phase2(uint3 DTid : SV_DispatchThreadID) {
 	uint bottom = center + WIDTH;
 	uint right = center + 1;
 
-	// SOR Phase2
+	// Even Row
 	if ((uint)(center / WIDTH) % 2 == 0) {
 		if (center % 2 == 0) {
-			_PotentialBufferWrite[center] = _PotentialBufferRead[center] + SOR_COEF * (0.25 * (_PotentialBufferRead[left] + _PotentialBufferRead[right] + _PotentialBufferRead[up] + _PotentialBufferRead[bottom]) - _PotentialBufferRead[center]);
+			_PotentialBufferWrite[center] = 0.5;
 		} else {
 			_PotentialBufferWrite[center] = _PotentialBufferRead[center];
 		}
 	} else {
 		if (center % 2 != 0) {
-			_PotentialBufferWrite[center] = _PotentialBufferRead[center] + SOR_COEF * (0.25 * (_PotentialBufferRead[left] + _PotentialBufferRead[right] + _PotentialBufferRead[up] + _PotentialBufferRead[bottom]) - _PotentialBufferRead[center]);
+			_PotentialBufferWrite[center] = 0.5;
 		} else {
 			_PotentialBufferWrite[center] = _PotentialBufferRead[center];
 		}
 	}
+	
+
 }
